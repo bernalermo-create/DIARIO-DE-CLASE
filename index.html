@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#2D6A4F">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Diario Clase">
+<title>Diario de Clase</title>
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body data-theme="light">
+
+<!-- Shell de la aplicación -->
+<div class="app-shell" id="appShell">
+
+  <!-- Backdrop sidebar (elemento real para capturar touch en iOS/Android) -->
+  <div id="sidebarBackdrop" class="sidebar-backdrop"></div>
+
+  <!-- Sidebar / Menú lateral -->
+  <aside id="sidebar" class="sidebar"></aside>
+
+  <!-- Área principal -->
+  <div class="app-main">
+    <header id="topbar" class="topbar"></header>
+    <main id="appContent" class="app-content">
+      <!-- Pantalla de carga inicial -->
+      <div class="splash-screen" id="splashScreen">
+        <div class="splash-logo">D</div>
+        <p class="splash-title">Diario de Clase</p>
+        <div class="splash-spinner"></div>
+      </div>
+    </main>
+  </div>
+
+</div>
+
+<!-- Toast container -->
+<div id="toastContainer" class="toast-container" aria-live="polite"></div>
+
+<!-- ═══════════════════════════════════════════════════════
+     SCRIPTS — cargados en orden de dependencia
+     Capacitor inyecta capacitor.js automáticamente al hacer
+     "npx cap sync", por eso no hay que incluirlo aquí.
+════════════════════════════════════════════════════════ -->
+<script src="js/db.js"></script>
+<script src="js/utils.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/services/groups.service.js"></script>
+<script src="js/services/classes.service.js"></script>
+<script src="js/services/schedule.service.js"></script>
+<script src="js/services/backup.service.js"></script>
+<script src="js/services/export.service.js"></script>
+<script src="js/services/notifications.service.js"></script>
+<script src="js/views/home.view.js"></script>
+<script src="js/views/grupos.view.js"></script>
+<script src="js/views/grupo-detalle.view.js"></script>
+<script src="js/views/clase-form.view.js"></script>
+<script src="js/views/horario.view.js"></script>
+<script src="js/views/config.view.js"></script>
+<script src="js/app.js"></script>
+
+</body>
+</html>
