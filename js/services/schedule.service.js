@@ -6,7 +6,7 @@
 var ScheduleService = (function () {
   'use strict';
 
-  /** Cuenta días hábiles (Lun–Vie) estrictamente entre dos fechas ISO (sin contar fromISO) */
+  /** Cuenta días hábiles (Lun–Vie) entre dos fechas ISO, incluyendo el día from */
   function _countSchoolDays(fromISO, toISO) {
     var from = new Date(fromISO + 'T00:00:00');
     var to   = new Date(toISO + 'T00:00:00');
@@ -14,9 +14,9 @@ var ScheduleService = (function () {
     var count = 0;
     var d = new Date(from);
     while (d < to) {
-      d.setDate(d.getDate() + 1);
       var wd = d.getDay(); // 0=Dom, 6=Sáb
       if (wd !== 0 && wd !== 6) count++;
+      d.setDate(d.getDate() + 1);
     }
     return count;
   }
@@ -157,8 +157,10 @@ var ScheduleService = (function () {
         }
         return this.getCycleCurrentDay();
       }
-      var wd2 = new Date().getDay(); // 0=Dom, 1=Lun…6=Sáb
-      return wd2 === 0 ? -1 : wd2 - 1;
+      var wd2 = new Date().getDay(); // 0=Dom, 1=Lun…5=Vie
+      // Con sábado removido: solo Lunes-Viernes tienen índice (0-4)
+      if (wd2 === 0 || wd2 === 6) return -1; // Domingo o sábado: sin clases
+      return wd2 - 1; // Lunes→0, Martes→1, Miércoles→2, Jueves→3, Viernes→4
     },
 
     /** Bloques del día activo (semana actual o día de ciclo actual) */

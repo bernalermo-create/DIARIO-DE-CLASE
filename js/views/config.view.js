@@ -157,6 +157,7 @@ var ConfigView = (function () {
         /* ── Seguridad ── */
         '<div class="card mt-3">' +
           '<h3 class="section-title">🔒 Seguridad</h3>' +
+          '<p class="text-xs text-warning" style="margin-bottom:8px;font-size:11px">⚠️ PIN: Solo una barrera de UI (Base64 ofuscado). No es seguridad criptográfica. Cualquiera con acceso al dispositivo puede quitarlo.</p>' +
           '<div class="flex items-center justify-between">' +
             '<div>' +
               '<p class="font-bold" style="font-size:14px">PIN de acceso</p>' +
@@ -379,7 +380,11 @@ var ConfigView = (function () {
       document.getElementById('btnSavePin').onclick = async function () {
         var pin = document.getElementById('pinInput').value;
         if (!/^\d{4}$/.test(pin)) { Toast.error('El PIN debe ser de exactamente 4 dígitos.'); return; }
-        await DB.setCfg('pinHash', btoa(pin));
+        // Hash simple: cada dígito sumado a 5 módulo 10 (ofuscación básica, no criptográfica real)
+        function simpleHash(pin) {
+          return pin.split('').map(function (d) { return ( (+d + 5) % 10 ).toString(); }).join('');
+        }
+        await DB.setCfg('pinHash', simpleHash(pin));
         await DB.setCfg('pinEnabled', true);
         Toast.success('PIN guardado. Se pedirá al abrir la app.');
       };

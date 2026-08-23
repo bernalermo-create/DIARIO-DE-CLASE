@@ -243,7 +243,11 @@ async function checkPin() {
 
     input.addEventListener('input', function () {
       if (input.value.length !== 4) return;
-      if (btoa(input.value) === stored) {
+      // Hash simple: cada dígito sumado a 5 módulo 10 (no es criptográfico pero oculta el valor directo)
+      function simpleHash(pin) {
+        return pin.split('').map(function (d) { return ( (+d + 5) % 10 ).toString(); }).join('');
+      }
+      if (simpleHash(input.value) === stored) {
         overlay.remove();
         resolve(true);
       } else {
@@ -253,8 +257,9 @@ async function checkPin() {
         input.value = '';
         input.classList.add('error');
         setTimeout(function () { input.classList.remove('error'); }, 600);
-        if (attempts >= 5) {
+if (attempts >= 5) {
           overlay.innerHTML = '<p style="color:var(--danger);text-align:center;padding:32px">Demasiados intentos.<br>Reinicia la app.</p>';
+          resolve(false);
         }
       }
     });

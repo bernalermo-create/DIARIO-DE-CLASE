@@ -135,7 +135,7 @@ var HorarioView = (function () {
         '<div class="field">' +
           '<label class="field-label">Tipo de horario</label>' +
           '<select class="select" id="cfgMode">' +
-            '<option value="semana"' + (mode === 'semana' ? ' selected' : '') + '>Días de la semana (Lunes a Sábado)</option>' +
+            '<option value="semana"' + (mode === 'semana' ? ' selected' : '') + '>Días de la semana (Lunes a Viernes)</option>' +
             '<option value="ciclo"' + (mode === 'ciclo' ? ' selected' : '') + '>Ciclo rotativo (Día 1, Día 2…)</option>' +
           '</select>' +
           '<p class="field-hint">Usa "Ciclo rotativo" si tu institución maneja Día 1, Día 2… en vez de días fijos de la semana.</p>' +

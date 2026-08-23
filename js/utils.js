@@ -7,7 +7,7 @@ var Utils = (function () {
 
   var MONTHS_S = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
   var MONTHS_L = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
-  var DAYS_L   = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
+  var DAYS_L   = ['Lunes','Martes','Miércoles','Jueves','Viernes'];
   var GROUP_COLORS = [
     '#2D6A4F','#1B6CA8','#7B2D8B','#B85C00','#145A32','#1A5276','#6C3483','#784212','#1F618D','#117A65',
     '#943126','#B7950B','#4A235A','#0E6655','#154360','#7D6608','#922B21','#1E8449','#6E2C00','#21618C',
@@ -30,10 +30,11 @@ var Utils = (function () {
       catch (e) { return 'id-' + Date.now() + '-' + Math.random().toString(36).slice(2,9); }
     },
 
-    /** Fecha de hoy en formato YYYY-MM-DD (sin desfase de zona horaria) */
+    /** Fecha de hoy en formato YYYY-MM-DD (hora local del dispositivo) */
     today: function () {
       var d = new Date();
-      return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+      var iso = d.toISOString().slice(0, 10);
+      return iso;
     },
 
     /** ISO → "martes 3 de junio de 2025" */
