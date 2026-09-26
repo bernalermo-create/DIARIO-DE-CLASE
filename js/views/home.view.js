@@ -1,208 +1,308 @@
 /* ═══════════════════════════════════════════════════════════════
-   home.view.js — Pantalla de inicio / Dashboard
-   Versión enfocada: solo lo esencial del día a día — clases de hoy,
-   tareas/recordatorios pendientes, y un vistazo a la semana para
-   programarse. La lista de grupos vive en "Mis grupos".
+   clase-form.view.js — Formulario de registro / edición de clase
+   Versión optimizada para uso rápido en celular (durante o al terminar la clase)
 ═══════════════════════════════════════════════════════════════ */
 
-var HomeView = (function () {
+var ClaseFormView = (function () {
   'use strict';
 
   return {
-    async render(container) {
-      container.innerHTML = '<div class="splash-screen"><div class="splash-spinner"></div></div>';
+    async render(container, params) {
+      params = params || {};
+      var editId     = params.classId || null;
+      var preGroupId = params.groupId || null;
+      var grupos     = await GroupsService.getAll();
+      var existing   = editId ? await ClassesService.getById(editId) : null;
+      var copySource = (!existing && params.copyFrom) ? await ClassesService.getById(params.copyFrom) : null;
 
-      // Cargar todos los datos en paralelo
-      var [grupos, todayBlocks, allBlocks, mode, dayLabels, activeDayIdx] = await Promise.all([
-        GroupsService.getAll(),
-        ScheduleService.getTodayBlocks(),
-        ScheduleService.getAll(),
-        ScheduleService.getMode(),
-        ScheduleService.getDayLabels(),
-        ScheduleService.getActiveDayIndex()
-      ]);
-      var pendientes = await ClassesService.getPendingTasks();
+      var d = existing || {
+        groupId: preGroupId || (copySource ? copySource.groupId : ''),
+        fecha: Utils.today(),
+        periodo: copySource ? (copySource.periodo || '') : '',
+        tema: copySource ? (copySource.tema || '') : '',
+        desarrollo: copySource ? (copySource.desarrollo || '') : '',
+        tarea: copySource ? (copySource.tarea || '') : '',
+        fechaTarea: '', tareaRevisada: 0,
+        observaciones: '', destacado: 0,
+        cancelada: params.precancelada ? 1 : 0, motivo: ''
+      };
 
-      // Sin grupos todavía: mostrar solo el estado vacío
       if (!grupos.length) {
         container.innerHTML =
           '<div class="empty-state card"><div class="empty-icon">🏫</div>' +
-          '<p class="empty-title">¡Bienvenido a Diario de Clase!</p>' +
-          '<p class="empty-desc">Crea tu primer grupo para comenzar a registrar clases.</p>' +
-          '<button class="btn btn-primary mt-3" id="btnNuevoGrupoHome">Crear grupo</button></div>';
-        document.getElementById('btnNuevoGrupoHome').onclick = function () { Router.go('grupos'); };
-        _placeFab();
+          '<p class="empty-title">Primero crea un grupo</p>' +
+          '<p class="empty-desc">Necesitas al menos un grupo para registrar una clase.</p>' +
+          '<button class="btn btn-primary mt-3" id="btnGoGrupos">Crear grupo</button></div>';
+        document.getElementById('btnGoGrupos').onclick = function () { Router.go('grupos'); };
         return;
       }
 
-      // Bloque activo ahora mismo
-      var activeBlock = ScheduleService.getCurrentBlock(todayBlocks);
+      Router.setTitle(editId ? 'Editar clase' : (copySource ? 'Copiar tarea' : 'Registrar clase'));
 
-      // Mapa de grupos para referencias rápidas
-      var gMap = {};
-      grupos.forEach(function (g) { gMap[g.id] = g; });
-
-      // Tareas de la semana (próximos 7 días, incluyendo hoy)
-      var weekTasks = await _getWeekTasks(gMap);
+      // Botón para usar última clase como plantilla (solo en nuevas clases)
+      var lastClassBtn = '';
+      if (!editId && !copySource && d.groupId) {
+        lastClassBtn =
+          '<button type="button" class="btn btn-sm btn-secondary" id="fcUseLast" style="margin-bottom:12px;width:100%">' +
+            '📋 Usar última clase de este grupo como plantilla' +
+          '</button>';
+      }
 
       container.innerHTML =
-        /* ── Alerta de pendientes ── */
-        (pendientes.length ?
-          '<div class="alert-pending" id="alertPend">' +
-            '<span style="font-size:24px">🔔</span>' +
-            '<div style="flex:1;min-width:0">' +
-              '<p class="font-bold" style="margin:0">' + pendientes.length + ' ' + Utils.plural(pendientes.length, 'tarea', 'tareas') + ' pendiente' + (pendientes.length > 1 ? 's' : '') + '</p>' +
-              '<p class="text-sm text-muted" style="margin:2px 0 0">Toca para ver los detalles</p>' +
-            '</div><span>›</span></div>' : '') +
-
-        /* ── Clases de hoy ── */
-        '<div class="card" style="margin-bottom:14px">' +
-          '<div class="card-header"><span class="section-title">📅 Hoy en tu horario</span></div>' +
-          (todayBlocks.length ?
-            todayBlocks.map(function (b) {
-              var g   = gMap[b.groupId];
-              var now = b === activeBlock;
-              return '<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)">' +
-                '<span style="font-size:20px;flex-shrink:0">' + (g ? (g.icono || '📘') : '❔') + '</span>' +
-                '<div style="flex:1;min-width:0">' +
-                  '<p class="font-bold truncate" style="font-size:14px">' + (g ? Utils.esc(g.nombre) : '—') + (g && g.asignatura ? ' · ' + Utils.esc(g.asignatura) : '') + '</p>' +
-                  (b.horaInicio ? '<p class="text-sm text-muted">⏰ ' + Utils.timeLabel(b.horaInicio) + (b.horaFin ? ' – ' + Utils.timeLabel(b.horaFin) : '') + (b.aula ? ' · 🚪 ' + Utils.esc(b.aula) : '') + '</p>' : '') +
-                '</div>' +
-                (now ? '<span class="tag" style="background:var(--primary);color:#fff">▶ Ahora</span>' : '') +
-                (g ? '<button class="btn btn-sm btn-secondary" data-reg-gid="' + b.groupId + '">Registrar</button>' : '') +
-              '</div>';
-            }).join('') :
-            '<p class="text-sm text-muted" style="padding:6px 0">No tienes clases programadas hoy.</p>') +
+        '<div class="page-header">' +
+          '<h1 class="page-title">' + (editId ? 'Editar clase' : (copySource ? '📋 Copiar tarea' : 'Registrar clase')) + '</h1>' +
+          '<button class="btn btn-secondary btn-sm" id="fcCancel">Cancelar</button>' +
         '</div>' +
 
-        /* ── Esta semana ── */
-        '<div class="card mt-3">' +
-          '<div class="card-header"><span class="section-title">🗓️ Esta semana</span></div>' +
-          '<p class="text-xs text-muted" style="margin:-4px 0 10px">' + (mode === 'ciclo' ? 'Ciclo rotativo' : 'Semana actual') + ' · toca un día para ver el detalle en Horario</p>' +
-          '<div class="week-glance">' +
-            dayLabels.map(function (label, idx) {
-              var blocks = allBlocks.filter(function (b) { return +b.dia === idx; })
-                .sort(function (a, b) { return a.horaInicio < b.horaInicio ? -1 : 1; });
-              var isToday = idx === activeDayIdx;
-              return '<div class="week-day' + (isToday ? ' today' : '') + '" data-week-day="' + idx + '">' +
-                '<p class="week-day-label">' + Utils.esc(label.replace('Día ', 'D')) + '</p>' +
-                (blocks.length
-                  ? blocks.map(function (b) {
-                      var g = gMap[b.groupId];
-                      return '<p class="week-day-item" title="' + (g ? Utils.esc(g.nombre) : '') + '">' + (g ? (g.icono || '📘') + ' ' + Utils.esc(g.nombre) : '?') + '</p>';
-                    }).join('')
-                  : '<p class="week-day-empty">—</p>') +
-              '</div>';
-            }).join('') +
+        (copySource ? '<div class="card" style="padding:10px 14px;margin-bottom:12px;border-left:3px solid var(--accent)"><p class="text-sm" style="margin:0">Copiando tema/tarea de la clase del ' + Utils.esc(copySource.fecha) + '. Ajusta lo que necesites.</p></div>' : '') +
+
+        lastClassBtn +
+
+        '<div class="card">' +
+
+          /* Grupo + Fecha */
+          '<div class="form-row">' +
+            '<div class="field">' +
+              '<label class="field-label">Grupo <span class="field-req">*</span></label>' +
+              '<select class="select" id="fcGroup">' +
+                '<option value="">Seleccionar grupo…</option>' +
+                grupos.map(function (g) {
+                  return '<option value="' + g.id + '"' + (d.groupId === g.id ? ' selected' : '') + '>' +
+                    Utils.esc(g.nombre + (g.asignatura ? ' — ' + g.asignatura : '')) + '</option>';
+                }).join('') +
+              '</select>' +
+            '</div>' +
+            '<div class="field">' +
+              '<label class="field-label">Fecha <span class="field-req">*</span></label>' +
+              '<input class="input" type="date" id="fcFecha" value="' + Utils.esc(d.fecha) + '">' +
+            '</div>' +
           '</div>' +
-          (weekTasks.length ?
-            '<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">' +
-              '<p class="text-xs font-bold text-muted" style="margin:0 0 8px;text-transform:uppercase;letter-spacing:.02em">📝 Tareas de la semana</p>' +
-              weekTasks.map(function (t) {
-                return '<div class="flex justify-between items-center" style="padding:6px 0">' +
-                  '<div style="min-width:0">' +
-                    '<p class="text-sm truncate" style="margin:0;font-weight:600">' + Utils.esc(Utils.cut(t.tarea, 50)) + '</p>' +
-                    '<p class="text-xs text-muted" style="margin:1px 0 0">' + Utils.esc(t.groupName) + '</p>' +
-                  '</div>' +
-                  '<span class="text-xs" style="white-space:nowrap;margin-left:8px;color:' + (t.isOverdue ? 'var(--danger)' : 'var(--ink-m)') + '">' + Utils.dateShort(t.fechaTarea) + '</span>' +
-                '</div>';
+          '<p class="text-xs text-muted" id="fcPeriodoLabel" style="margin:6px 2px 0"></p>' +
+          '<input type="hidden" id="fcPeriodo" value="' + Utils.esc(d.periodo) + '">' +
+
+          '<div class="field mt-3" id="fcSiblingsWrap" style="display:none">' +
+            '<label class="field-label">Duplicar a otros grupos del mismo grado</label>' +
+            '<div id="fcSiblingsList" class="flex gap-2" style="flex-wrap:wrap"></div>' +
+          '</div>' +
+
+          /* No hubo clase */
+          '<label class="mt-3" style="display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer;font-weight:600;padding:10px 12px;background:var(--bg);border-radius:var(--r-sm)">' +
+            '<input type="checkbox" id="fcCancelada"' + (+d.cancelada ? ' checked' : '') + '>' +
+            '❌ No hubo clase este día' +
+          '</label>' +
+          '<div id="fcMotivoWrap" style="display:' + (+d.cancelada ? '' : 'none') + ';margin-top:10px">' +
+            '<label class="field-label">Motivo <span class="field-req">*</span></label>' +
+            '<select class="select" id="fcMotivo">' +
+              '<option value="">Seleccionar…</option>' +
+              ['Día festivo / feriado', 'Reunión de docentes', 'Actividad institucional', 'Paro / huelga', 'Incapacidad médica', 'Suspensión de clases', 'Permiso / diligencia personal', 'Otro'].map(function (m) {
+                return '<option value="' + Utils.esc(m) + '"' + (d.motivo === m ? ' selected' : '') + '>' + Utils.esc(m) + '</option>';
               }).join('') +
-            '</div>' : '') +
-          '<button class="btn btn-secondary btn-sm btn-block mt-3" id="btnGoHorario">Ver horario completo →</button>' +
+            '</select>' +
+          '</div>' +
+
+          '<div id="fcContentSection" style="display:' + (+d.cancelada ? 'none' : '') + '">' +
+
+            '<div class="field mt-3">' +
+              '<label class="field-label">Tema de la clase</label>' +
+              '<input class="input" type="text" id="fcTema" inputmode="text" autocomplete="off" placeholder="Ej: Ecuaciones de primer grado" value="' + Utils.esc(d.tema) + '">' +
+            '</div>' +
+            '<div class="field">' +
+              '<label class="field-label">Desarrollo <span class="field-req">*</span></label>' +
+              '<textarea class="textarea" id="fcDesarrollo" rows="4" placeholder="¿Qué se hizo durante la clase?">' + Utils.esc(d.desarrollo) + '</textarea>' +
+            '</div>' +
+            '<div class="field">' +
+              '<label class="field-label">Tarea (opcional)</label>' +
+              '<textarea class="textarea" id="fcTarea" rows="2" placeholder="Describe la tarea o actividad para casa…">' + Utils.esc(d.tarea) + '</textarea>' +
+            '</div>' +
+            '<div class="field" id="fcFechaEntregaWrap" style="' + (d.tarea ? '' : 'display:none') + '">' +
+              '<label class="field-label">Fecha de entrega</label>' +
+              '<input class="input" type="date" id="fcFechaTarea" value="' + Utils.esc(d.fechaTarea) + '">' +
+            '</div>' +
+            (existing ?
+              '<label style="display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer;margin-top:8px">' +
+                '<input type="checkbox" id="fcRevisada"' + (+d.tareaRevisada ? ' checked' : '') + '>' +
+                'Tarea revisada ✓' +
+              '</label>' : '') +
+
+            /* Más opciones (colapsable) */
+            '<button type="button" class="btn btn-sm btn-ghost mt-2" id="fcToggleMore" style="padding-left:0">▾ Más opciones</button>' +
+            '<div id="fcMoreWrap" style="display:none">' +
+              '<div class="field">' +
+                '<label class="field-label">Observaciones</label>' +
+                '<textarea class="textarea" id="fcObs" rows="2" placeholder="Notas adicionales, aspectos a mejorar…">' + Utils.esc(d.observaciones) + '</textarea>' +
+              '</div>' +
+              '<label style="display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer">' +
+                '<input type="checkbox" id="fcDestacado"' + (+d.destacado ? ' checked' : '') + '>' +
+                'Marcar como destacada ⭐' +
+              '</label>' +
+            '</div>' +
+
+          '</div><!-- /fcContentSection -->' +
+
+        '</div>' +
+        '<div class="form-bottom-spacer"></div>' +
+        '<div class="sticky-save-bar">' +
+          '<button class="btn btn-primary btn-block" id="fcSave" style="min-height:52px;font-size:16px">💾 Guardar</button>' +
         '</div>';
 
-      _placeFab();
+      /* ── Periodo automático ── */
+      var fechaEl        = document.getElementById('fcFecha');
+      var periodoEl      = document.getElementById('fcPeriodo');
+      var periodoLabelEl = document.getElementById('fcPeriodoLabel');
+      var periodoIsAuto  = !d.periodo;
+      async function autoFillPeriodo() {
+        if (periodoIsAuto) {
+          var p = await PeriodsService.getPeriodForDate(fechaEl.value);
+          periodoEl.value = p || '';
+        }
+        periodoLabelEl.textContent = periodoEl.value ? '📅 Periodo: ' + periodoEl.value : '📅 Periodo: sin definir para esta fecha';
+      }
+      fechaEl.addEventListener('change', autoFillPeriodo);
+      autoFillPeriodo();
 
-      /* ── Eventos ── */
-      var alertEl = document.getElementById('alertPend');
-      if (alertEl) alertEl.onclick = function () { HomeView._showReminders(pendientes, gMap); };
-
-      document.getElementById('btnGoHorario').onclick = function () { Router.go('horario'); };
-
-      container.querySelectorAll('[data-reg-gid]').forEach(function (btn) {
-        btn.onclick = function (e) {
-          e.stopPropagation();
-          Router.go('nueva-clase', { groupId: btn.dataset.regGid });
+      /* ── Más opciones ── */
+      var moreBtn  = document.getElementById('fcToggleMore');
+      var moreWrap = document.getElementById('fcMoreWrap');
+      if (moreBtn) {
+        moreBtn.onclick = function () {
+          var open = moreWrap.style.display !== 'none';
+          moreWrap.style.display = open ? 'none' : '';
+          moreBtn.textContent = open ? '▾ Más opciones' : '▴ Menos opciones';
         };
+      }
+
+      /* ── Fecha de entrega ── */
+      var tareaEl = document.getElementById('fcTarea');
+      var wrapEl  = document.getElementById('fcFechaEntregaWrap');
+      if (tareaEl) {
+        tareaEl.addEventListener('input', function () {
+          wrapEl.style.display = tareaEl.value.trim() ? '' : 'none';
+        });
+      }
+
+      /* ── No hubo clase ── */
+      var canceladaEl   = document.getElementById('fcCancelada');
+      var motivoWrapEl  = document.getElementById('fcMotivoWrap');
+      var contentSecEl  = document.getElementById('fcContentSection');
+      canceladaEl.addEventListener('change', function () {
+        motivoWrapEl.style.display  = canceladaEl.checked ? '' : 'none';
+        contentSecEl.style.display  = canceladaEl.checked ? 'none' : '';
+        refreshSiblings();
       });
 
-      container.querySelectorAll('[data-week-day]').forEach(function (el) {
-        el.onclick = function () { Router.go('horario'); };
-      });
-    },
+      /* ── Grupos hermanos ── */
+      var groupSelEl     = document.getElementById('fcGroup');
+      var siblingsWrapEl = document.getElementById('fcSiblingsWrap');
+      var siblingsListEl = document.getElementById('fcSiblingsList');
 
-    /* FAB flotante para registrar clase rápido */
-    _placeFabInternal() {},
+      async function refreshSiblings() {
+        var gid = groupSelEl.value;
+        siblingsListEl.innerHTML = '';
+        if (!gid || canceladaEl.checked) { siblingsWrapEl.style.display = 'none'; return; }
+        var siblings = await GroupsService.getSiblingsByGrade(gid);
+        if (!siblings.length) { siblingsWrapEl.style.display = 'none'; return; }
+        siblingsWrapEl.style.display = '';
+        siblingsListEl.innerHTML = siblings.map(function (s) {
+          return '<label style="display:flex;align-items:center;gap:6px;font-size:13px;border:1px solid var(--border);padding:6px 10px;border-radius:var(--r-sm);cursor:pointer">' +
+            '<input type="checkbox" class="fcSiblingChk" value="' + s.id + '"> ' +
+            Utils.esc(s.nombre + (s.asignatura ? ' — ' + s.asignatura : '')) +
+          '</label>';
+        }).join('');
+      }
+      groupSelEl.addEventListener('change', refreshSiblings);
+      refreshSiblings();
 
-    /* Modal de recordatorios */
-    _showReminders(pendientes, gMap) {
-      if (!pendientes.length) return;
-      var contentEl = document.createElement('div');
-      contentEl.innerHTML =
-        '<div style="display:flex;flex-direction:column;gap:10px;max-height:55vh;overflow-y:auto;-webkit-overflow-scrolling:touch">' +
-          pendientes.map(function (c) {
-            var g = gMap[c.groupId] || {};
-            return '<div style="padding:12px 14px;background:var(--bg);border-radius:10px;border-left:3px solid var(--accent)">' +
-              '<p class="font-bold" style="font-size:14px;margin:0">' + Utils.esc(g.nombre || '—') + (g.asignatura ? ' (' + Utils.esc(g.asignatura) + ')' : '') + '</p>' +
-              '<p class="text-sm" style="margin:3px 0 0">📝 ' + Utils.esc(Utils.cut(c.tarea, 80)) + '</p>' +
-              '<p class="text-sm text-muted" style="margin:2px 0 0">Entrega: ' + Utils.dateShort(c.fechaTarea) + '</p>' +
-              '<button class="btn btn-sm mt-2" style="background:var(--primary-s);color:var(--primary)" data-mark-id="' + c.id + '">✓ Marcar revisada</button>' +
-            '</div>';
-          }).join('') +
-        '</div>';
-
-      var modal = Modal.open({ title: '🔔 Tareas pendientes', content: contentEl });
-
-      contentEl.querySelectorAll('[data-mark-id]').forEach(function (btn) {
-        btn.onclick = async function () {
-          await ClassesService.toggleTareaRevisada(btn.dataset.markId);
-          btn.closest('[style*="border-left"]').style.opacity = '.4';
-          btn.textContent = '✓ Revisada';
-          btn.disabled = true;
-          Toast.success('Marcada como revisada.');
-          SheetsSyncService.pushInBackground();
+      /* ── Usar última clase como plantilla ── */
+      var useLastBtn = document.getElementById('fcUseLast');
+      if (useLastBtn) {
+        useLastBtn.onclick = async function () {
+          var gid = groupSelEl.value;
+          if (!gid) {
+            Toast.warning('Primero selecciona un grupo');
+            return;
+          }
+          var clases = await ClassesService.getByGroup(gid);
+          var lastReal = clases.find(function (c) { return !+c.cancelada; });
+          if (!lastReal) {
+            Toast.info('No hay clases anteriores de este grupo');
+            return;
+          }
+          document.getElementById('fcTema').value = lastReal.tema || '';
+          document.getElementById('fcDesarrollo').value = lastReal.desarrollo || '';
+          document.getElementById('fcTarea').value = lastReal.tarea || '';
+          if (lastReal.tarea) {
+            document.getElementById('fcFechaEntregaWrap').style.display = '';
+          }
+          Toast.success('Plantilla cargada. Ajusta lo que necesites.');
+          // Enfocar el campo de desarrollo para editar rápido
+          document.getElementById('fcDesarrollo').focus();
         };
-      });
+      }
+
+      /* ── Cancelar ── */
+      document.getElementById('fcCancel').onclick = function () {
+        if (preGroupId) Router.go('grupo', { groupId: preGroupId });
+        else Router.go('home');
+      };
+
+      /* ── Guardar ── */
+      document.getElementById('fcSave').onclick = async function () {
+        var saveData = {
+          id:            editId || undefined,
+          groupId:       document.getElementById('fcGroup').value,
+          fecha:         document.getElementById('fcFecha').value,
+          periodo:       document.getElementById('fcPeriodo').value,
+          tema:          document.getElementById('fcTema') ? document.getElementById('fcTema').value : '',
+          desarrollo:    document.getElementById('fcDesarrollo') ? document.getElementById('fcDesarrollo').value : '',
+          observaciones: document.getElementById('fcObs') ? document.getElementById('fcObs').value : '',
+          tarea:         document.getElementById('fcTarea') ? document.getElementById('fcTarea').value : '',
+          fechaTarea:    document.getElementById('fcFechaTarea') ? document.getElementById('fcFechaTarea').value : '',
+          tareaRevisada: document.getElementById('fcRevisada') ? (document.getElementById('fcRevisada').checked ? 1 : 0) : 0,
+          destacado:     document.getElementById('fcDestacado') ? (document.getElementById('fcDestacado').checked ? 1 : 0) : 0,
+          cancelada:     canceladaEl.checked ? 1 : 0,
+          motivo:        document.getElementById('fcMotivo') ? document.getElementById('fcMotivo').value : '',
+          createdAt:     existing ? existing.createdAt : undefined
+        };
+
+        var res = await ClassesService.save(saveData);
+        if (!res.ok) { Toast.error(res.msg); return; }
+
+        // Duplicar a grupos hermanos
+        var checkedSiblings = Array.from(document.querySelectorAll('.fcSiblingChk:checked')).map(function (c) { return c.value; });
+        var dupCount = 0;
+        if (checkedSiblings.length) {
+          var created = await ClassesService.duplicateToGroups(res.record, checkedSiblings);
+          dupCount = created.length;
+        }
+
+        // Notificación de tarea
+        if (res.record.tarea && res.record.fechaTarea) {
+          var grp = await GroupsService.getById(res.record.groupId);
+          if (grp) await NotificationsService.scheduleTaskReminder(res.record, grp.nombre);
+        }
+
+        Toast.success(
+          (editId ? 'Clase actualizada.' : (saveData.cancelada ? 'Ausencia registrada.' : '¡Clase registrada!')) +
+          (dupCount ? ' Duplicada a ' + dupCount + ' ' + Utils.plural(dupCount, 'grupo') + '.' : '')
+        );
+        SheetsSyncService.pushInBackground();
+
+        // Volver al grupo o a inicio
+        if (saveData.groupId) Router.go('grupo', { groupId: saveData.groupId });
+        else Router.go('home');
+      };
+
+      // Enfocar automáticamente el campo más útil al abrir (especialmente en móvil)
+      setTimeout(function () {
+        if (editId || copySource) return;
+        var temaEl = document.getElementById('fcTema');
+        var desEl  = document.getElementById('fcDesarrollo');
+        if (temaEl && !temaEl.value) {
+          temaEl.focus();
+        } else if (desEl) {
+          desEl.focus();
+        }
+      }, 300);
     }
   };
-
-  /* Tareas con fecha de entrega dentro de los próximos 7 días (incluye hoy) */
-  async function _getWeekTasks(gMap) {
-    var todos = await ClassesService.getAll();
-    var today = Utils.today();
-    var limit = Utils.addDaysISO ? Utils.addDaysISO(today, 7) : _plusDays(today, 7);
-    return todos
-      .filter(function (c) { return c.tarea && c.fechaTarea && !+c.tareaRevisada && c.fechaTarea <= limit; })
-      .map(function (c) {
-        var g = gMap[c.groupId];
-        return {
-          tarea: c.tarea,
-          fechaTarea: c.fechaTarea,
-          groupName: g ? g.nombre : '—',
-          isOverdue: c.fechaTarea < today
-        };
-      })
-      .sort(function (a, b) { return a.fechaTarea < b.fechaTarea ? -1 : 1; })
-      .slice(0, 8);
-  }
-
-  function _plusDays(iso, days) {
-    var d = new Date(iso + 'T00:00:00');
-    d.setDate(d.getDate() + days);
-    return d.toISOString().slice(0, 10);
-  }
-
-  function _placeFab() {
-    var fab = document.getElementById('globalFab');
-    if (!fab) {
-      fab = document.createElement('button');
-      fab.id = 'globalFab';
-      fab.className = 'fab';
-      fab.innerHTML = '+';
-      fab.title = 'Registrar clase';
-      document.body.appendChild(fab);
-    }
-    fab.onclick = function () { Router.go('nueva-clase'); };
-    fab.style.display = '';
-  }
 })();
