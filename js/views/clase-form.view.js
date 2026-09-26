@@ -1,7 +1,6 @@
 /* ═══════════════════════════════════════════════════════════════
    clase-form.view.js — Formulario de registro / edición de clase
-   Versión compacta: lo esencial siempre visible, lo secundario
-   colapsado bajo "Más opciones" — pensado para uso rápido en celular.
+   Versión optimizada para uso rápido en celular (durante o al terminar la clase)
 ═══════════════════════════════════════════════════════════════ */
 
 var ClaseFormView = (function () {
@@ -38,14 +37,26 @@ var ClaseFormView = (function () {
         return;
       }
 
-      Router.setTitle(editId ? 'Editar clase' : (copySource ? 'Copiar tarea' : 'Nueva clase'));
+      Router.setTitle(editId ? 'Editar clase' : (copySource ? 'Copiar tarea' : 'Registrar clase'));
+
+      // Botón para usar última clase como plantilla (solo en nuevas clases)
+      var lastClassBtn = '';
+      if (!editId && !copySource && d.groupId) {
+        lastClassBtn =
+          '<button type="button" class="btn btn-sm btn-secondary" id="fcUseLast" style="margin-bottom:12px;width:100%">' +
+            '📋 Usar última clase de este grupo como plantilla' +
+          '</button>';
+      }
 
       container.innerHTML =
         '<div class="page-header">' +
           '<h1 class="page-title">' + (editId ? 'Editar clase' : (copySource ? '📋 Copiar tarea' : 'Registrar clase')) + '</h1>' +
           '<button class="btn btn-secondary btn-sm" id="fcCancel">Cancelar</button>' +
         '</div>' +
-        (copySource ? '<div class="card" style="padding:10px 14px;margin-bottom:12px;border-left:3px solid var(--accent)"><p class="text-sm" style="margin:0">Copiando tema/tarea de la clase del ' + Utils.esc(copySource.fecha) + '. Ajusta la fecha, el grupo y lo que necesites antes de guardar.</p></div>' : '') +
+
+        (copySource ? '<div class="card" style="padding:10px 14px;margin-bottom:12px;border-left:3px solid var(--accent)"><p class="text-sm" style="margin:0">Copiando tema/tarea de la clase del ' + Utils.esc(copySource.fecha) + '. Ajusta lo que necesites.</p></div>' : '') +
+
+        lastClassBtn +
 
         '<div class="card">' +
 
@@ -108,7 +119,7 @@ var ClaseFormView = (function () {
               '<input class="input" type="date" id="fcFechaTarea" value="' + Utils.esc(d.fechaTarea) + '">' +
             '</div>' +
             (existing ?
-              '<label style="display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer">' +
+              '<label style="display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer;margin-top:8px">' +
                 '<input type="checkbox" id="fcRevisada"' + (+d.tareaRevisada ? ' checked' : '') + '>' +
                 'Tarea revisada ✓' +
               '</label>' : '') +
@@ -131,10 +142,10 @@ var ClaseFormView = (function () {
         '</div>' +
         '<div class="form-bottom-spacer"></div>' +
         '<div class="sticky-save-bar">' +
-          '<button class="btn btn-primary btn-block" id="fcSave" style="min-height:50px;font-size:16px">💾 Guardar</button>' +
+          '<button class="btn btn-primary btn-block" id="fcSave" style="min-height:52px;font-size:16px">💾 Guardar</button>' +
         '</div>';
 
-      /* ── Periodo automático según la fecha ── */
+      /* ── Periodo automático ── */
       var fechaEl        = document.getElementById('fcFecha');
       var periodoEl      = document.getElementById('fcPeriodo');
       var periodoLabelEl = document.getElementById('fcPeriodoLabel');
@@ -160,7 +171,7 @@ var ClaseFormView = (function () {
         };
       }
 
-      /* ── Mostrar/ocultar campo fecha de entrega ── */
+      /* ── Fecha de entrega ── */
       var tareaEl = document.getElementById('fcTarea');
       var wrapEl  = document.getElementById('fcFechaEntregaWrap');
       if (tareaEl) {
@@ -169,7 +180,7 @@ var ClaseFormView = (function () {
         });
       }
 
-      /* ── No hubo clase (cancelada) ── */
+      /* ── No hubo clase ── */
       var canceladaEl   = document.getElementById('fcCancelada');
       var motivoWrapEl  = document.getElementById('fcMotivoWrap');
       var contentSecEl  = document.getElementById('fcContentSection');
@@ -179,7 +190,7 @@ var ClaseFormView = (function () {
         refreshSiblings();
       });
 
-      /* ── Grupos hermanos del mismo grado (duplicar) ── */
+      /* ── Grupos hermanos ── */
       var groupSelEl     = document.getElementById('fcGroup');
       var siblingsWrapEl = document.getElementById('fcSiblingsWrap');
       var siblingsListEl = document.getElementById('fcSiblingsList');
@@ -200,6 +211,33 @@ var ClaseFormView = (function () {
       }
       groupSelEl.addEventListener('change', refreshSiblings);
       refreshSiblings();
+
+      /* ── Usar última clase como plantilla ── */
+      var useLastBtn = document.getElementById('fcUseLast');
+      if (useLastBtn) {
+        useLastBtn.onclick = async function () {
+          var gid = groupSelEl.value;
+          if (!gid) {
+            Toast.warning('Primero selecciona un grupo');
+            return;
+          }
+          var clases = await ClassesService.getByGroup(gid);
+          var lastReal = clases.find(function (c) { return !+c.cancelada; });
+          if (!lastReal) {
+            Toast.info('No hay clases anteriores de este grupo');
+            return;
+          }
+          document.getElementById('fcTema').value = lastReal.tema || '';
+          document.getElementById('fcDesarrollo').value = lastReal.desarrollo || '';
+          document.getElementById('fcTarea').value = lastReal.tarea || '';
+          if (lastReal.tarea) {
+            document.getElementById('fcFechaEntregaWrap').style.display = '';
+          }
+          Toast.success('Plantilla cargada. Ajusta lo que necesites.');
+          // Enfocar el campo de desarrollo para editar rápido
+          document.getElementById('fcDesarrollo').focus();
+        };
+      }
 
       /* ── Cancelar ── */
       document.getElementById('fcCancel').onclick = function () {
@@ -229,7 +267,7 @@ var ClaseFormView = (function () {
         var res = await ClassesService.save(saveData);
         if (!res.ok) { Toast.error(res.msg); return; }
 
-        // Duplicar a grupos del mismo grado marcados por el usuario
+        // Duplicar a grupos hermanos
         var checkedSiblings = Array.from(document.querySelectorAll('.fcSiblingChk:checked')).map(function (c) { return c.value; });
         var dupCount = 0;
         if (checkedSiblings.length) {
@@ -237,17 +275,34 @@ var ClaseFormView = (function () {
           dupCount = created.length;
         }
 
-        // Programar notificación si hay tarea con fecha
+        // Notificación de tarea
         if (res.record.tarea && res.record.fechaTarea) {
           var grp = await GroupsService.getById(res.record.groupId);
           if (grp) await NotificationsService.scheduleTaskReminder(res.record, grp.nombre);
         }
 
-        Toast.success((editId ? 'Clase actualizada.' : (saveData.cancelada ? 'Ausencia de clase registrada.' : '¡Clase registrada!')) + (dupCount ? ' Duplicada a ' + dupCount + ' ' + Utils.plural(dupCount, 'grupo') + '.' : ''));
+        Toast.success(
+          (editId ? 'Clase actualizada.' : (saveData.cancelada ? 'Ausencia registrada.' : '¡Clase registrada!')) +
+          (dupCount ? ' Duplicada a ' + dupCount + ' ' + Utils.plural(dupCount, 'grupo') + '.' : '')
+        );
         SheetsSyncService.pushInBackground();
+
+        // Volver al grupo o a inicio
         if (saveData.groupId) Router.go('grupo', { groupId: saveData.groupId });
         else Router.go('home');
       };
+
+      // Enfocar automáticamente el campo más útil al abrir (especialmente en móvil)
+      setTimeout(function () {
+        if (editId || copySource) return;
+        var temaEl = document.getElementById('fcTema');
+        var desEl  = document.getElementById('fcDesarrollo');
+        if (temaEl && !temaEl.value) {
+          temaEl.focus();
+        } else if (desEl) {
+          desEl.focus();
+        }
+      }, 300);
     }
   };
 })();
