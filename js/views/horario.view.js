@@ -7,6 +7,7 @@ var HorarioView = (function () {
   'use strict';
 
   var _refreshInterval = null;
+  var _dragging = false; // true mientras se arrastra un bloque: no redibujar
 
   return {
     async render(container) {
@@ -65,14 +66,15 @@ var HorarioView = (function () {
                   .sort(function (a, b) { return a.horaInicio < b.horaInicio ? -1 : 1; });
                 var isToday = idx === activeIdx;
 
-                return '<div class="schedule-col">' +
+                return '<div class="schedule-col" data-dia="' + idx + '">' +
                   '<div class="schedule-day-hdr" style="' + (isToday ? 'background:var(--accent);' : '') + '">' + Utils.esc(dia) + '</div>' +
                   blocks.map(function (b) {
                     var g     = gMap[b.groupId];
                     var start = Utils.timeToMins(b.horaInicio);
                     var end   = Utils.timeToMins(b.horaFin);
                     var isNow = isToday && start >= 0 && end > start && nowMins >= start && nowMins < end;
-                    return '<div class="schedule-block' + (isNow ? ' now-active' : '') + '" style="border-left:3px solid ' + (g ? g.color : '#ccc') + '">' +
+                    return '<div class="schedule-block' + (isNow ? ' now-active' : '') + '" data-block-id="' + b.id + '" style="border-left:3px solid ' + (g ? g.color : '#ccc') + '">' +
+                      '<span class="drag-handle" title="Arrastra para mover a otro día" aria-label="Mover bloque">⠿</span>' +
                       (b.horaInicio ? '<div class="time-pill">⏰ ' + Utils.timeLabel(b.horaInicio) + (b.horaFin ? ' – ' + Utils.timeLabel(b.horaFin) : '') + '</div>' : '') +
                       '<p class="font-bold" style="font-size:13px;margin:0">' + (g ? (g.icono || '📘') + ' ' + Utils.esc(g.nombre) : '?') + '</p>' +
                       (g && g.asignatura ? '<p class="text-xs text-muted" style="margin:1px 0 0">' + Utils.esc(g.asignatura) + '</p>' : '') +
@@ -103,6 +105,14 @@ var HorarioView = (function () {
           };
         });
 
+        container.querySelectorAll('.schedule-block').forEach(function (blockEl) {
+          blockEl.addEventListener('pointerdown', function (e) {
+            if (e.target.closest('button')) return;
+            // Ratón: se agarra el bloque completo. Táctil: solo el asa ⠿ (para no bloquear el desplazamiento).
+            if (e.pointerType === 'mouse' || e.target.closest('.drag-handle')) _startDrag(e, blockEl, draw);
+          });
+        });
+
         var cycleSel = document.getElementById('hCycleToday');
         if (cycleSel) {
           cycleSel.onchange = async function () {
@@ -120,11 +130,88 @@ var HorarioView = (function () {
 
       /* Actualizar highlight cada minuto */
       _refreshInterval = setInterval(function () {
-        if (Router.currentView === 'horario') draw();
+        if (Router.currentView === 'horario') { if (!_dragging) draw(); }
         else clearInterval(_refreshInterval);
       }, 60000);
     }
   };
+
+  /** Arrastrar un bloque a otro día (ratón o dedo). Mantiene hora y aula; solo cambia el día. */
+  function _startDrag(e, blockEl, redraw) {
+    if (e.button !== undefined && e.button !== 0) return;
+    e.preventDefault();
+    var id      = blockEl.dataset.blockId;
+    var startCol = blockEl.closest('.schedule-col');
+    var scroller = document.querySelector('.schedule-scroll');
+    var rect    = blockEl.getBoundingClientRect();
+    var offX    = e.clientX - rect.left, offY = e.clientY - rect.top;
+    var moved   = false, target = null, lastX = e.clientX, lastY = e.clientY;
+
+    var ghost = blockEl.cloneNode(true);
+    ghost.classList.add('drag-ghost');
+    ghost.style.width = rect.width + 'px';
+    ghost.style.left  = rect.left + 'px';
+    ghost.style.top   = rect.top + 'px';
+
+    function setTarget(col) {
+      if (target === col) return;
+      if (target) target.classList.remove('drop-target');
+      target = col;
+      if (target) target.classList.add('drop-target');
+    }
+
+    function onMove(ev) {
+      lastX = ev.clientX; lastY = ev.clientY;
+      if (!moved && Math.abs(lastX - e.clientX) + Math.abs(lastY - e.clientY) < 6) return;
+      if (!moved) {
+        moved = true; _dragging = true;
+        document.body.appendChild(ghost);
+        blockEl.classList.add('dragging');
+        document.body.classList.add('is-dragging');
+      }
+      ghost.style.left = (lastX - offX) + 'px';
+      ghost.style.top  = (lastY - offY) + 'px';
+      var el = document.elementFromPoint(lastX, lastY);
+      setTarget(el ? el.closest('.schedule-col') : null);
+    }
+
+    // Desplazamiento horizontal automático al acercarse a los bordes
+    var scrollTimer = setInterval(function () {
+      if (!moved || !scroller) return;
+      var r = scroller.getBoundingClientRect();
+      if (lastX < r.left + 50) scroller.scrollLeft -= 14;
+      else if (lastX > r.right - 50) scroller.scrollLeft += 14;
+    }, 30);
+
+    function finish(cancel) {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onCancel);
+      clearInterval(scrollTimer);
+      ghost.remove();
+      blockEl.classList.remove('dragging');
+      document.body.classList.remove('is-dragging');
+      var col = target;
+      setTarget(null);
+      _dragging = false;
+      if (!moved || cancel || !col || col === startCol) { if (moved) redraw(); return; }
+      DB.getById('horario', id).then(function (rec) {
+        if (!rec) return redraw();
+        rec.dia = +col.dataset.dia;
+        return ScheduleService.save(rec).then(function () {
+          Toast.success('Bloque movido.');
+          SheetsSyncService.pushInBackground();
+          redraw();
+        });
+      });
+    }
+    function onUp() { finish(false); }
+    function onCancel() { finish(true); }
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onCancel);
+  }
 
   function _openConfigModal(onSave) {
     var formEl = document.createElement('div');
