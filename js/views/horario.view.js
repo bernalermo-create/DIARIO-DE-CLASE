@@ -80,7 +80,10 @@ var HorarioView = (function () {
                       (g && g.asignatura ? '<p class="text-xs text-muted" style="margin:1px 0 0">' + Utils.esc(g.asignatura) + '</p>' : '') +
                       (b.aula ? '<p class="text-xs text-muted" style="margin:1px 0 0">🚪 ' + Utils.esc(b.aula) + '</p>' : '') +
                       (isNow ? '<p class="text-xs" style="color:var(--primary);font-weight:700;margin-top:4px">▶ Ahora</p>' : '') +
-                      '<button class="btn btn-xs btn-ghost" style="margin-top:6px;width:100%;color:var(--danger)" data-del-block="' + b.id + '">✕ Quitar</button>' +
+                      '<div style="display:flex;gap:4px;margin-top:6px">' +
+                        '<button class="btn btn-xs btn-ghost" style="flex:1" data-edit-block="' + b.id + '">✎ Editar</button>' +
+                        '<button class="btn btn-xs btn-ghost" style="flex:1;color:var(--danger)" data-del-block="' + b.id + '">✕ Quitar</button>' +
+                      '</div>' +
                     '</div>';
                   }).join('') +
                   '<button class="btn btn-xs btn-secondary" style="margin-top:6px;width:100%" data-add-dia="' + idx + '">+ Agregar</button>' +
@@ -96,6 +99,13 @@ var HorarioView = (function () {
             Toast.success('Bloque eliminado.');
             SheetsSyncService.pushInBackground();
             draw();
+          };
+        });
+
+        container.querySelectorAll('[data-edit-block]').forEach(function (btn) {
+          btn.onclick = async function () {
+            var rec = allBlocks.find(function (x) { return x.id === btn.dataset.editBlock; });
+            if (rec) _openAddModal(+rec.dia, dayLabels, grupos, draw, rec);
           };
         });
 
@@ -271,7 +281,7 @@ var HorarioView = (function () {
     });
   }
 
-  function _openAddModal(dia, dayLabels, grupos, onSave) {
+  function _openAddModal(dia, dayLabels, grupos, onSave, existing) {
     var formEl = document.createElement('div');
     formEl.innerHTML =
       '<div class="field">' +
@@ -300,6 +310,20 @@ var HorarioView = (function () {
         '<input class="input" type="text" id="mbAula" inputmode="text" autocomplete="off" placeholder="Ej: 301, Lab Física">' +
       '</div>';
 
+    if (existing) {
+      formEl.querySelector('#mbGroup').value = existing.groupId;
+      formEl.querySelector('#mbHI').value    = existing.horaInicio || '';
+      formEl.querySelector('#mbHF').value    = existing.horaFin || '';
+      formEl.querySelector('#mbAula').value  = existing.aula || '';
+      formEl.querySelector('#mbDur').value   = 'custom';
+      var daySel = document.createElement('div');
+      daySel.className = 'field mt-3';
+      daySel.innerHTML = '<label class="field-label">Día</label><select class="select" id="mbDia">' +
+        dayLabels.map(function (l, i) { return '<option value="' + i + '"' + (i === +existing.dia ? ' selected' : '') + '>' + Utils.esc(l) + '</option>'; }).join('') +
+        '</select>';
+      formEl.insertBefore(daySel, formEl.firstChild);
+    }
+
     var hiEl  = formEl.querySelector('#mbHI');
     var hfEl  = formEl.querySelector('#mbHF');
     var durEl = formEl.querySelector('#mbDur');
@@ -311,15 +335,17 @@ var HorarioView = (function () {
     hfEl.addEventListener('input', function () { durEl.value = 'custom'; });
 
     Modal.open({
-      title: 'Agregar a ' + dayLabels[dia],
+      title: existing ? 'Editar bloque' : 'Agregar a ' + dayLabels[dia],
       content: formEl,
       actions: [
         { label: 'Cancelar', variant: 'ghost' },
         {
-          label: 'Agregar', variant: 'primary', closeOnClick: false,
+          label: existing ? 'Guardar' : 'Agregar', variant: 'primary', closeOnClick: false,
           onClick: async function () {
+            var diaEl = document.getElementById('mbDia');
             var res = await ScheduleService.save({
-              dia:        dia,
+              id:         existing ? existing.id : undefined,
+              dia:        diaEl ? +diaEl.value : dia,
               groupId:    document.getElementById('mbGroup').value,
               horaInicio: document.getElementById('mbHI').value,
               horaFin:    document.getElementById('mbHF').value,
@@ -327,7 +353,7 @@ var HorarioView = (function () {
             });
             if (!res.ok) { Toast.error(res.msg); return; }
             Modal.close();
-            Toast.success('Bloque agregado.');
+            Toast.success(existing ? 'Bloque actualizado.' : 'Bloque agregado.');
             SheetsSyncService.pushInBackground();
             if (onSave) onSave();
           }
