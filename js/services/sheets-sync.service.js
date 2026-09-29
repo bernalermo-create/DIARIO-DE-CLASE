@@ -264,7 +264,14 @@ var SheetsSyncService = (function () {
      * opts.force: fusiona y sube aunque no haya cambios locales pendientes.
      * Devuelve {ok:true,...conteos} o {ok:false,error}.
      */
+    /** Sincroniza con la nube (Firestore) si hay sesión; si no, con Google Sheets (modo antiguo). */
     sync(url, opts) {
+      if (window.CloudSync && CloudSync.active()) return CloudSync.sync();
+      return this.syncSheets(url, opts);
+    },
+
+    /** Sincronización con Google Sheets (respaldo / modo antiguo). */
+    syncSheets(url, opts) {
       if (!url) return Promise.resolve({ ok: false, error: 'Falta la URL del Apps Script.' });
       var force = !!(opts && opts.force);
       if (_syncInFlight) { _syncAgain = true; return _syncInFlight; }

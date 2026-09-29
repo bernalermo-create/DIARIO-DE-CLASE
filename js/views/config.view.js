@@ -10,6 +10,7 @@ var ConfigView = (function () {
       var info    = BackupService.storageInfo();
       var sheetsUrl = (await DB.getCfg('sheetsUrl')) || Utils.DEFAULT_SHEETS_URL;
       var sheetsToken = (await DB.getCfg('sheetsToken')) || '';
+      var cloudUser = (window.CloudSync && CloudSync.active()) ? CloudSync.user() : null;
       var pinEnabled = !!(await DB.getCfg('pinEnabled'));
       var currentAccent = (await DB.getCfg('colorAccent')) || 'indigo';
 
@@ -60,9 +61,22 @@ var ConfigView = (function () {
           '</div>' +
         '</div>' +
 
+        /* ── Cuenta y nube ── */
+        '<div class="card mt-3">' +
+          '<h3 class="section-title">☁️ Cuenta y nube</h3>' +
+          (cloudUser
+            ? '<p class="text-sm" style="margin-bottom:10px">Sesión iniciada como <b>' + Utils.esc(cloudUser.email || '') + '</b>. Tus datos se sincronizan solos entre dispositivos.</p>' +
+              '<div class="flex gap-2" style="flex-wrap:wrap">' +
+                '<button class="btn btn-primary" id="btnCloudSync">↻ Sincronizar ahora</button>' +
+                '<button class="btn btn-secondary" id="btnCloudOut">Cerrar sesión</button>' +
+              '</div>'
+            : '<p class="text-sm text-muted" style="margin-bottom:10px">No has iniciado sesión: los datos solo están en este dispositivo.</p>' +
+              '<button class="btn btn-primary" id="btnCloudIn">Entrar con Google</button>') +
+        '</div>' +
+
         /* ── Google Sheets ── */
         '<div class="card mt-3">' +
-          '<h3 class="section-title">📊 Google Sheets</h3>' +
+          '<h3 class="section-title">📊 Google Sheets (respaldo antiguo)</h3>' +
           '<p class="text-sm text-muted" style="margin-bottom:6px">' +
             'Sincroniza tus clases con tu hoja de Google.' +
             ' <a href="https://docs.google.com/spreadsheets/d/1lvo6zGy3m3Y-Ab_lrJIgSZ7BPDjUk6j52QENH4WiEFE/edit" target="_blank" rel="noopener" style="color:var(--primary);font-weight:700">Abrir hoja ↗</a>' +
@@ -78,7 +92,7 @@ var ConfigView = (function () {
           '</div>' +
           '<div class="flex gap-2 mt-3" style="flex-wrap:wrap">' +
             '<button class="btn btn-secondary" id="btnSaveUrl">Guardar URL y token</button>' +
-            '<button class="btn btn-primary" id="btnSync">↑ Sincronizar ahora</button>' +
+            '<button class="btn btn-primary" id="btnSync">↑ Enviar a Sheets</button>' +
             '<button class="btn btn-secondary" id="btnPull">↓ Cargar desde Sheets</button>' +
           '</div>' +
           '<p class="text-sm text-muted" style="margin-top:8px">↑ Sincroniza: trae lo de la hoja, lo fusiona con lo de este dispositivo y sube el resultado. ↓ Trae lo que hay en la hoja y lo reemplaza en este dispositivo (útil al abrir la app en un navegador nuevo).</p>' +
@@ -358,7 +372,7 @@ var ConfigView = (function () {
         if (!url) { Toast.warning('Guarda primero la URL del Apps Script.'); return; }
         Toast.info('Sincronizando con Google Sheets…');
         try {
-          var r = await SheetsSyncService.push(url);
+          var r = await SheetsSyncService.syncSheets(url, { force: true });
           if (r.ok) {
             Toast.success('✓ Sincronizado: ' + r.gruposCount + ' grupos, ' + r.clasesCount + ' clases, ' + r.horarioCount + ' horarios, ' + r.estudiantesCount + ' estudiantes. Verifica tu hoja.');
           } else {
@@ -368,6 +382,24 @@ var ConfigView = (function () {
           Toast.error('Error de conexión. Verifica la URL.'); console.error(err);
         }
       };
+
+      // Nube
+      var btnCloudSync = document.getElementById('btnCloudSync');
+      if (btnCloudSync) btnCloudSync.onclick = async function () {
+        Toast.info('Sincronizando…');
+        var r = await CloudSync.sync();
+        if (r.ok) Toast.success('✓ Sincronizado: ' + r.gruposCount + ' grupos, ' + r.clasesCount + ' clases (' + r.subidos + ' subidos, ' + r.descargados + ' descargados).');
+        else Toast.error('No se pudo sincronizar: ' + r.error);
+      };
+      var btnCloudOut = document.getElementById('btnCloudOut');
+      if (btnCloudOut) btnCloudOut.onclick = async function () {
+        var ok = await Modal.confirm({ title: 'Cerrar sesión', message: 'Los datos de este dispositivo se conservan, pero dejará de sincronizarse hasta que vuelvas a entrar.', confirmLabel: 'Cerrar sesión' });
+        if (!ok) return;
+        await CloudSync.signOut();
+        location.reload();
+      };
+      var btnCloudIn = document.getElementById('btnCloudIn');
+      if (btnCloudIn) btnCloudIn.onclick = function () { location.reload(); };
 
       // Cargar (descargar) desde Sheets
       document.getElementById('btnPull').onclick = async function () {

@@ -280,7 +280,48 @@ async function checkPin() {
   });
 }
 
-/* ── Sincronización automática con Sheets en CADA apertura de la app ── */
+/* ── INICIO DE SESIÓN CON GOOGLE (nube) ─────────────────────── */
+async function ensureLogin() {
+  if (!CloudSync.available()) return;
+  var user;
+  try { user = await CloudSync.init(); }
+  catch (e) { console.warn('[Cloud] init falló, se sigue sin nube:', e); return; }
+  if (user) return;
+
+  await new Promise(function (resolve) {
+    var overlay = document.createElement('div');
+    overlay.style.cssText =
+      'position:fixed;inset:0;z-index:99998;background:var(--bg);display:flex;flex-direction:column;' +
+      'align-items:center;justify-content:center;gap:16px;padding:32px;text-align:center';
+    overlay.innerHTML =
+      '<div class="sidebar-brand-mark" style="width:60px;height:60px;border-radius:16px;font-size:28px">D</div>' +
+      '<h2 style="font-size:20px;font-weight:800">Diario de Clase</h2>' +
+      '<p class="text-muted" style="font-size:14px;max-width:320px">Entra con tu cuenta de Google para ver tus datos en este dispositivo.</p>' +
+      '<button class="btn btn-primary" id="loginGoogle" style="min-height:48px;min-width:240px">Entrar con Google</button>' +
+      '<p id="loginErr" style="color:var(--danger);font-size:13px;min-height:18px;max-width:320px"></p>' +
+      '<button class="btn btn-ghost btn-sm" id="loginSkip">Continuar sin la nube (solo este dispositivo)</button>';
+    document.body.appendChild(overlay);
+
+    document.getElementById('loginGoogle').onclick = async function () {
+      var btn = this; btn.disabled = true;
+      document.getElementById('loginErr').textContent = '';
+      try {
+        var u = await CloudSync.signIn();
+        if (u) { overlay.remove(); resolve(); return; }
+      } catch (err) {
+        if (err.code !== 'auth/popup-closed-by-user' && err.code !== 'auth/cancelled-popup-request') {
+          document.getElementById('loginErr').textContent = 'No se pudo iniciar sesión: ' + (err.message || err.code);
+        }
+      }
+      btn.disabled = false;
+    };
+    document.getElementById('loginSkip').onclick = function () {
+      CloudSync.skip(); overlay.remove(); resolve();
+    };
+  });
+}
+
+/* ── Sincronización automática en CADA apertura de la app ── */
 async function _autoSyncOnOpen() {
   try {
     var url = (await DB.getCfg('sheetsUrl')) || Utils.DEFAULT_SHEETS_URL;
@@ -289,7 +330,7 @@ async function _autoSyncOnOpen() {
 
     var r = await SheetsSyncService.autoSync(url);
     if (r && r.ok && !r.empty) {
-      console.log('[App] Sincronizado automáticamente con Google Sheets: ' + r.gruposCount + ' grupos, ' + r.clasesCount + ' clases.');
+      console.log('[App] Sincronizado automáticamente: ' + r.gruposCount + ' grupos, ' + r.clasesCount + ' clases.');
       return r;
     }
     return null;
@@ -336,13 +377,16 @@ async function initApp() {
     var ok = await checkPin();
     if (!ok) return;
 
+    // 6.5. Iniciar sesión con Google (nube)
+    await ensureLogin();
+
     // 7. Inicializar notificaciones
     await NotificationsService.init();
 
     // 8. Iniciar reloj
     Clock.start();
 
-    // 8.5. Sincronizar automáticamente con Sheets cada vez que se abre la app
+    // 8.5. Sincronizar automáticamente cada vez que se abre la app
     var autoSynced = await _autoSyncOnOpen();
 
     // 9. Navegar a inicio
@@ -351,7 +395,7 @@ async function initApp() {
     if (autoSynced) {
       setTimeout(function () {
         if (typeof Toast !== 'undefined') {
-          Toast.success('✓ Actualizado desde Google Sheets (' + autoSynced.gruposCount + ' grupos, ' + autoSynced.clasesCount + ' clases, ' + autoSynced.estudiantesCount + ' estudiantes).');
+          Toast.success('✓ Sincronizado (' + autoSynced.gruposCount + ' grupos, ' + autoSynced.clasesCount + ' clases, ' + autoSynced.estudiantesCount + ' estudiantes).');
         }
       }, 400);
     }
@@ -370,7 +414,7 @@ async function initApp() {
       if (document.hidden) return; // no sincronizar si la pestaña está en segundo plano
       _autoSyncOnOpen().then(function (r) {
         if (r && r.ok && !r.empty && typeof Toast !== 'undefined' && Router.currentView !== 'nueva-clase') {
-          Toast.info('↻ Datos actualizados desde Google Sheets.');
+          Toast.info('↻ Datos actualizados.');
         }
       });
     }, 5 * 60 * 1000);
