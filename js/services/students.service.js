@@ -22,7 +22,7 @@ var StudentsService = (function () {
       var existing = await this.getByGroup(groupId);
       var record = {
         id: Utils.id(), groupId: groupId, nombre: nombre,
-        numero: existing.length + 1, createdAt: new Date().toISOString()
+        numero: existing.length + 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
       };
       await DB.upsert('estudiantes', record);
       return { ok: true, record: record };
@@ -32,6 +32,7 @@ var StudentsService = (function () {
       var s = await DB.getById('estudiantes', id);
       if (!s) return { ok: false, msg: 'No encontrado.' };
       s.nombre = (nombre || '').trim() || s.nombre;
+      s.updatedAt = new Date().toISOString();
       await DB.upsert('estudiantes', s);
       return { ok: true, record: s };
     },
@@ -75,7 +76,7 @@ var StudentsService = (function () {
         var record = {
           id: Utils.id(), groupId: groupId, nombre: n,
           numero: existingCount + created.length + 1,
-          createdAt: new Date().toISOString()
+          createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
         };
         await DB.upsert('estudiantes', record);
         created.push(record);

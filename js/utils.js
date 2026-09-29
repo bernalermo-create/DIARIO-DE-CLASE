@@ -24,6 +24,28 @@ var Utils = (function () {
     DURATION_PRESETS: DURATION_PRESETS,
     DEFAULT_SHEETS_URL: DEFAULT_SHEETS_URL,
 
+    /** Hash del PIN: SHA-256 con sal aleatoria ("sha256$sal$hex"). Sin crypto.subtle cae al formato Base64 anterior. */
+    hashPin: async function (pin) {
+      if (!(window.crypto && crypto.subtle)) return btoa(pin);
+      var salt = Array.from(crypto.getRandomValues(new Uint8Array(8))).map(function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+      return 'sha256$' + salt + '$' + await Utils._sha256(salt + pin);
+    },
+
+    _sha256: async function (text) {
+      var buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+      return Array.from(new Uint8Array(buf)).map(function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+    },
+
+    /** Compara un PIN con lo guardado. Acepta los formatos anteriores (Base64 y "dígito+5") para migrar sin bloquear al usuario. */
+    verifyPin: async function (pin, stored) {
+      if (stored.indexOf('sha256$') === 0) {
+        var parts = stored.split('$');
+        return (await Utils._sha256(parts[1] + pin)) === parts[2];
+      }
+      var plus5 = pin.split('').map(function (d) { return ((+d + 5) % 10).toString(); }).join('');
+      return btoa(pin) === stored || (/^\d{4}$/.test(stored) && plus5 === stored);
+    },
+
     /** UUID v4 */
     id: function () {
       try { return crypto.randomUUID(); }

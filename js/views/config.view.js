@@ -9,6 +9,7 @@ var ConfigView = (function () {
     async render(container) {
       var info    = BackupService.storageInfo();
       var sheetsUrl = (await DB.getCfg('sheetsUrl')) || Utils.DEFAULT_SHEETS_URL;
+      var sheetsToken = (await DB.getCfg('sheetsToken')) || '';
       var pinEnabled = !!(await DB.getCfg('pinEnabled'));
       var currentAccent = (await DB.getCfg('colorAccent')) || 'indigo';
 
@@ -70,73 +71,112 @@ var ConfigView = (function () {
             '<label class="field-label">URL de la Web App (Apps Script)</label>' +
             '<input class="input" type="url" id="sheetsUrl" inputmode="url" placeholder="https://script.google.com/macros/s/…/exec" value="' + Utils.esc(sheetsUrl) + '">' +
           '</div>' +
+          '<div class="field mt-3">' +
+            '<label class="field-label">Token de acceso (recomendado)</label>' +
+            '<input class="input" type="password" id="sheetsToken" autocomplete="off" placeholder="Igual al TOKEN del Apps Script" value="' + Utils.esc(sheetsToken) + '">' +
+            '<p class="field-hint">Protege los datos de tus estudiantes: sin este token, cualquiera con la URL puede leer o borrar la hoja. Defínelo como propiedad TOKEN en Apps Script y escríbelo igual aquí.</p>' +
+          '</div>' +
           '<div class="flex gap-2 mt-3" style="flex-wrap:wrap">' +
-            '<button class="btn btn-secondary" id="btnSaveUrl">Guardar URL</button>' +
+            '<button class="btn btn-secondary" id="btnSaveUrl">Guardar URL y token</button>' +
             '<button class="btn btn-primary" id="btnSync">↑ Sincronizar ahora</button>' +
             '<button class="btn btn-secondary" id="btnPull">↓ Cargar desde Sheets</button>' +
           '</div>' +
-          '<p class="text-sm text-muted" style="margin-top:8px">↑ Sube tus datos locales a la hoja. ↓ Trae lo que hay en la hoja y lo reemplaza en este dispositivo (útil al abrir la app en un navegador nuevo).</p>' +
+          '<p class="text-sm text-muted" style="margin-top:8px">↑ Sincroniza: trae lo de la hoja, lo fusiona con lo de este dispositivo y sube el resultado. ↓ Trae lo que hay en la hoja y lo reemplaza en este dispositivo (útil al abrir la app en un navegador nuevo).</p>' +
           '<details style="margin-top:14px">' +
             '<summary class="text-sm" style="cursor:pointer;font-weight:700;color:var(--ink-m)">Ver código Apps Script ▾</summary>' +
             '<div style="position:relative;margin-top:8px">' +
               '<button id="btnCopyScript" class="btn btn-secondary btn-xs" style="position:absolute;top:6px;right:6px;z-index:1">Copiar</button>' +
               '<pre id="scriptCode" style="font-size:11px;background:var(--bg);border:1px solid var(--border);padding:36px 12px 12px;border-radius:var(--r-sm);overflow:auto;line-height:1.6;margin:0;-webkit-overflow-scrolling:touch">' +
 'var SPREADSHEET_ID = "1lvo6zGy3m3Y-Ab_lrJIgSZ7BPDjUk6j52QENH4WiEFE";\n' +
-'function _writeSheet(ss,name,header,rows,textCols){\n' +
+'\n' +
+'function _json(obj) {\n' +
+'  return ContentService.createTextOutput(JSON.stringify(obj))\n' +
+'    .setMimeType(ContentService.MimeType.JSON);\n' +
+'}\n' +
+'\n' +
+'function _tokenOk(given) {\n' +
+'  var t = PropertiesService.getScriptProperties().getProperty(\'TOKEN\');\n' +
+'  return !t || given === t; // sin TOKEN configurado: compatible con versiones anteriores\n' +
+'}\n' +
+'\n' +
+'function _writeSheet(ss, name, header, rows) {\n' +
 '  var sh = ss.getSheetByName(name);\n' +
 '  if (!sh) sh = ss.insertSheet(name);\n' +
+'  var width = header.length;\n' +
+'  var data = [header].concat((rows || []).map(function (r) {\n' +
+'    var out = [];\n' +
+'    for (var i = 0; i < width; i++) out.push(r[i] === undefined || r[i] === null ? \'\' : String(r[i]));\n' +
+'    return out;\n' +
+'  }));\n' +
 '  sh.clearContents();\n' +
-'  if (header&&header.length) sh.appendRow(header);\n' +
-'  if (textCols&&textCols.length&&rows&&rows.length) {\n' +
-'    textCols.forEach(function(col){ sh.getRange(2,col,rows.length,1).setNumberFormat("@"); });\n' +
-'  }\n' +
-'  (rows||[]).forEach(function(r){ sh.appendRow(r); });\n' +
+'  var range = sh.getRange(1, 1, data.length, width);\n' +
+'  range.setNumberFormat(\'@\'); // todo texto: nada se interpreta como fórmula/fecha/número\n' +
+'  range.setValues(data);\n' +
 '}\n' +
-'function _readSheet(ss,name){\n' +
+'\n' +
+'function _readSheet(ss, name) {\n' +
 '  var sh = ss.getSheetByName(name);\n' +
-'  if (!sh) return {header:[],rows:[]};\n' +
-'  var values = sh.getDataRange().getValues();\n' +
-'  return {header: values.length?values[0]:[], rows: values.length>1?values.slice(1):[]};\n' +
+'  if (!sh) return { header: [], rows: [] };\n' +
+'  var values = sh.getDataRange().getValues(); // compatible con hojas viejas donde Sheets convirtió fechas\n' +
+'  return {\n' +
+'    header: values.length ? values[0] : [],\n' +
+'    rows:   values.length > 1 ? values.slice(1) : []\n' +
+'  };\n' +
 '}\n' +
+'\n' +
 'function doPost(e) {\n' +
 '  var lock = LockService.getScriptLock();\n' +
-'  var gotLock = lock.tryLock(20000);\n' +
-'  if (!gotLock) {\n' +
-'    return ContentService.createTextOutput(JSON.stringify({ok:false,error:"ocupado"})).setMimeType(ContentService.MimeType.JSON);\n' +
+'  if (!lock.tryLock(20000)) {\n' +
+'    return _json({ ok: false, error: \'La hoja está ocupada por otra sincronización, intenta de nuevo en un momento.\' });\n' +
 '  }\n' +
 '  try {\n' +
-'    var raw = (e.parameter&&e.parameter.data)\n' +
+'    var raw = (e.parameter && e.parameter.data)\n' +
 '      ? e.parameter.data\n' +
-'      : (e.postData&&e.postData.contents)\n' +
-'        ? e.postData.contents : "{}";\n' +
+'      : (e.postData && e.postData.contents) ? e.postData.contents : "{}";\n' +
 '    var d = JSON.parse(raw);\n' +
+'    if (!_tokenOk(d.token)) return _json({ ok: false, error: \'Token inválido.\' });\n' +
+'\n' +
+'    // Protección contra escrituras truncadas/vacías que borrarían la hoja.\n' +
+'    if (!d.grupos || !d.grupos.header) return _json({ ok: false, error: \'Payload incompleto (falta Grupos).\' });\n' +
+'    if (!d.grupos.rows.length && !d.allowEmpty) return _json({ ok: false, error: \'Se rechazó escribir una hoja de Grupos vacía.\' });\n' +
+'\n' +
 '    var ss = SpreadsheetApp.openById(SPREADSHEET_ID);\n' +
-'    if (d.grupos)  _writeSheet(ss,"Grupos",d.grupos.header,d.grupos.rows);\n' +
-'    if (d.clases)  _writeSheet(ss,"Clases",d.clases.header,d.clases.rows);\n' +
-'    if (d.horario) _writeSheet(ss,"Horario",d.horario.header,d.horario.rows,[4,5]);\n' +
-'    if (d.estudiantes) _writeSheet(ss,"Estudiantes",d.estudiantes.header,d.estudiantes.rows);\n' +
-'    return ContentService\n' +
-'      .createTextOutput(JSON.stringify({ok:true}))\n' +
-'      .setMimeType(ContentService.MimeType.JSON);\n' +
-'  } catch(err) {\n' +
-'    return ContentService\n' +
-'      .createTextOutput(JSON.stringify({ok:false,error:err.message}))\n' +
-'      .setMimeType(ContentService.MimeType.JSON);\n' +
-'  } finally { lock.releaseLock(); }\n' +
+'    _writeSheet(ss, \'Grupos\',      d.grupos.header,      d.grupos.rows);\n' +
+'    if (d.clases)      _writeSheet(ss, \'Clases\',      d.clases.header,      d.clases.rows);\n' +
+'    if (d.horario)     _writeSheet(ss, \'Horario\',     d.horario.header,     d.horario.rows);\n' +
+'    if (d.estudiantes) _writeSheet(ss, \'Estudiantes\', d.estudiantes.header, d.estudiantes.rows);\n' +
+'    if (d.eliminados)  _writeSheet(ss, \'Eliminados\',  d.eliminados.header,  d.eliminados.rows);\n' +
+'    SpreadsheetApp.flush();\n' +
+'\n' +
+'    return _json({ ok: true });\n' +
+'  } catch (err) {\n' +
+'    return _json({ ok: false, error: err.message });\n' +
+'  } finally {\n' +
+'    lock.releaseLock();\n' +
+'  }\n' +
 '}\n' +
-'function doGet() {\n' +
+'\n' +
+'function doGet(e) {\n' +
 '  var lock = LockService.getScriptLock();\n' +
-'  lock.tryLock(15000);\n' +
+'  if (!lock.tryLock(15000)) {\n' +
+'    return _json({ ok: false, error: \'La hoja está ocupada, intenta de nuevo en un momento.\' });\n' +
+'  }\n' +
 '  try {\n' +
+'    if (!_tokenOk(e && e.parameter && e.parameter.token)) return _json({ ok: false, error: \'Token inválido.\' });\n' +
 '    var ss = SpreadsheetApp.openById(SPREADSHEET_ID);\n' +
-'    return ContentService\n' +
-'      .createTextOutput(JSON.stringify({ok:true,grupos:_readSheet(ss,"Grupos"),clases:_readSheet(ss,"Clases"),horario:_readSheet(ss,"Horario"),estudiantes:_readSheet(ss,"Estudiantes")}))\n' +
-'      .setMimeType(ContentService.MimeType.JSON);\n' +
-'  } catch(err) {\n' +
-'    return ContentService\n' +
-'      .createTextOutput(JSON.stringify({ok:false,error:err.message}))\n' +
-'      .setMimeType(ContentService.MimeType.JSON);\n' +
-'  } finally { lock.releaseLock(); }\n' +
+'    return _json({\n' +
+'      ok: true,\n' +
+'      grupos:      _readSheet(ss, \'Grupos\'),\n' +
+'      clases:      _readSheet(ss, \'Clases\'),\n' +
+'      horario:     _readSheet(ss, \'Horario\'),\n' +
+'      estudiantes: _readSheet(ss, \'Estudiantes\'),\n' +
+'      eliminados:  _readSheet(ss, \'Eliminados\')\n' +
+'    });\n' +
+'  } catch (err) {\n' +
+'    return _json({ ok: false, error: err.message });\n' +
+'  } finally {\n' +
+'    lock.releaseLock();\n' +
+'  }\n' +
 '}' +
               '</pre>' +
             '</div>' +
@@ -157,7 +197,7 @@ var ConfigView = (function () {
         /* ── Seguridad ── */
         '<div class="card mt-3">' +
           '<h3 class="section-title">🔒 Seguridad</h3>' +
-          '<p class="text-xs text-warning" style="margin-bottom:8px;font-size:11px">⚠️ PIN: Solo una barrera de UI (Base64 ofuscado). No es seguridad criptográfica. Cualquiera con acceso al dispositivo puede quitarlo.</p>' +
+          '<p class="text-xs text-warning" style="margin-bottom:8px;font-size:11px">⚠️ PIN: barrera de UI (guardado con SHA-256). Con 4 dígitos no es seguridad criptográfica real: quien tenga acceso al dispositivo puede quitarlo.</p>' +
           '<div class="flex items-center justify-between">' +
             '<div>' +
               '<p class="font-bold" style="font-size:14px">PIN de acceso</p>' +
@@ -265,7 +305,8 @@ var ConfigView = (function () {
       document.getElementById('btnSaveUrl').onclick = async function () {
         var url = document.getElementById('sheetsUrl').value.trim();
         await DB.setCfg('sheetsUrl', url);
-        Toast.success('URL guardada.');
+        await DB.setCfg('sheetsToken', document.getElementById('sheetsToken').value.trim());
+        Toast.success('URL y token guardados.');
       };
 
       /* ── Periodos académicos ── */
@@ -315,13 +356,13 @@ var ConfigView = (function () {
       document.getElementById('btnSync').onclick = async function () {
         var url = (await DB.getCfg('sheetsUrl')) || document.getElementById('sheetsUrl').value.trim();
         if (!url) { Toast.warning('Guarda primero la URL del Apps Script.'); return; }
-        Toast.info('Enviando a Google Sheets…');
+        Toast.info('Sincronizando con Google Sheets…');
         try {
           var r = await SheetsSyncService.push(url);
           if (r.ok) {
-            Toast.success('✓ Enviado: ' + r.gruposCount + ' grupos, ' + r.clasesCount + ' clases, ' + r.horarioCount + ' horarios, ' + r.estudiantesCount + ' estudiantes. Verifica tu hoja.');
+            Toast.success('✓ Sincronizado: ' + r.gruposCount + ' grupos, ' + r.clasesCount + ' clases, ' + r.horarioCount + ' horarios, ' + r.estudiantesCount + ' estudiantes. Verifica tu hoja.');
           } else {
-            Toast.error(r.error === 'No hay grupos para sincronizar.' ? r.error : 'El servidor respondió con error: ' + r.error);
+            Toast.error(r.error === 'No hay grupos para sincronizar.' ? r.error : 'No se pudo sincronizar: ' + r.error);
           }
         } catch (err) {
           Toast.error('Error de conexión. Verifica la URL.'); console.error(err);
@@ -335,7 +376,7 @@ var ConfigView = (function () {
 
         var ok = await Modal.confirm({
           title: 'Cargar desde Sheets',
-          message: 'Esto reemplazará TODOS los grupos y clases guardados en este dispositivo con lo que haya en la hoja de cálculo. ¿Continuar?',
+          message: 'Esto reemplazará TODOS los grupos y clases guardados en este dispositivo con lo que haya en la hoja de cálculo (se guarda una copia previa por seguridad). ¿Continuar?',
           confirmLabel: 'Cargar y reemplazar',
           danger: true
         });
@@ -380,11 +421,7 @@ var ConfigView = (function () {
       document.getElementById('btnSavePin').onclick = async function () {
         var pin = document.getElementById('pinInput').value;
         if (!/^\d{4}$/.test(pin)) { Toast.error('El PIN debe ser de exactamente 4 dígitos.'); return; }
-        // Hash simple: cada dígito sumado a 5 módulo 10 (ofuscación básica, no criptográfica real)
-        function simpleHash(pin) {
-          return pin.split('').map(function (d) { return ( (+d + 5) % 10 ).toString(); }).join('');
-        }
-        await DB.setCfg('pinHash', simpleHash(pin));
+        await DB.setCfg('pinHash', await Utils.hashPin(pin));
         await DB.setCfg('pinEnabled', true);
         Toast.success('PIN guardado. Se pedirá al abrir la app.');
       };
@@ -413,7 +450,8 @@ var ConfigView = (function () {
         await Promise.all([
           DB.clearTable('grupos'),
           DB.clearTable('clases'),
-          DB.clearTable('horario')
+          DB.clearTable('horario'),
+          DB.clearTable('estudiantes')
         ]);
         Toast.success('Todos los datos eliminados.');
         SheetsSyncService.pushInBackground();

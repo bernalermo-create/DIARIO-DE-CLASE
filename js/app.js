@@ -222,6 +222,7 @@ async function checkPin() {
 
   return new Promise(function (resolve) {
     var attempts = 0;
+    var MAX_ATTEMPTS = 5, LOCK_MS = 5 * 60 * 1000;
 
     var overlay = document.createElement('div');
     overlay.style.cssText =
@@ -241,25 +242,38 @@ async function checkPin() {
     var input = document.getElementById('pinEntry');
     input.focus();
 
-    input.addEventListener('input', function () {
+    function showLocked(until) {
+      var min = Math.max(1, Math.ceil((until - Date.now()) / 60000));
+      document.getElementById('pinError').textContent = 'Demasiados intentos. Espera ' + min + ' min.';
+      input.value = '';
+      input.disabled = true;
+      setTimeout(function () { input.disabled = false; document.getElementById('pinError').textContent = ''; input.focus(); }, Math.max(0, until - Date.now()));
+    }
+
+    // El bloqueo persiste: recargar la página no reinicia los intentos.
+    DB.getCfg('pinLockUntil').then(function (until) {
+      if (until && +until > Date.now()) showLocked(+until);
+    });
+
+    input.addEventListener('input', async function () {
       if (input.value.length !== 4) return;
-      // Hash simple: cada dígito sumado a 5 módulo 10 (no es criptográfico pero oculta el valor directo)
-      function simpleHash(pin) {
-        return pin.split('').map(function (d) { return ( (+d + 5) % 10 ).toString(); }).join('');
-      }
-      if (simpleHash(input.value) === stored) {
+      var entered = input.value;
+      if (await Utils.verifyPin(entered, stored)) {
+        if (stored.indexOf('sha256$') !== 0) await DB.setCfg('pinHash', await Utils.hashPin(entered)); // migra formato anterior → SHA-256
         overlay.remove();
         resolve(true);
       } else {
         attempts++;
         document.getElementById('pinError').textContent =
-          'PIN incorrecto.' + (attempts >= 3 ? ' ' + (5 - attempts) + ' intentos restantes.' : '');
+          'PIN incorrecto.' + (attempts >= 3 ? ' ' + (MAX_ATTEMPTS - attempts) + ' intentos restantes.' : '');
         input.value = '';
         input.classList.add('error');
         setTimeout(function () { input.classList.remove('error'); }, 600);
-if (attempts >= 5) {
-          overlay.innerHTML = '<p style="color:var(--danger);text-align:center;padding:32px">Demasiados intentos.<br>Reinicia la app.</p>';
-          resolve(false);
+        if (attempts >= MAX_ATTEMPTS) {
+          attempts = 0;
+          var until = Date.now() + LOCK_MS;
+          await DB.setCfg('pinLockUntil', until);
+          showLocked(until);
         }
       }
     });

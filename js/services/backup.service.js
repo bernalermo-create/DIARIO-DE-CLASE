@@ -99,7 +99,7 @@ var BackupService = (function () {
           clases:      payload.clases      || [],
           horario:     payload.horario     || [],
           estudiantes: payload.estudiantes || []
-        });
+        }, { recordDeletions: true });
 
         return {
           ok: true,

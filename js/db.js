@@ -174,6 +174,18 @@ var DB = (function () {
     });
   }
 
+  var SYNCED_TABLES = ['grupos', 'clases', 'horario', 'estudiantes'];
+  var TOMBSTONE_TTL_MS = 90 * 24 * 3600 * 1000;
+
+  /** Marca "hay cambios sin subir" también en modo nativo (el fallback LS ya lo hace en _write). */
+  async function markDirtyNative() {
+    if (!isNative || _suppressDirty) return;
+    var rows = await Native.query('SELECT valor FROM config WHERE clave = ?', ['dirtySince']);
+    if (rows[0] && JSON.parse(rows[0].valor)) return;
+    await Native.run('INSERT OR REPLACE INTO config (clave, valor) VALUES (?,?)',
+      ['dirtySince', JSON.stringify(new Date().toISOString())]);
+  }
+
   /* ─── API pública ────────────────────────────────────────────── */
   return {
     ready: false,
@@ -260,6 +272,7 @@ var DB = (function () {
         var vals   = cols.map(function (c) { return record[c]; });
         var sql = 'INSERT OR REPLACE INTO ' + table + ' (' + cols.join(',') + ') VALUES (' + places + ')';
         await Native.run(sql, vals);
+        await markDirtyNative();
         return record;
       }
       return LS.upsert(table, record);
@@ -267,8 +280,10 @@ var DB = (function () {
 
     /** Elimina un registro por id. */
     async remove(table, id) {
+      await this.addTombstones(table, [id]);
       if (isNative) {
         await Native.run('DELETE FROM ' + table + ' WHERE id = ?', [id]);
+        await markDirtyNative();
         return;
       }
       return LS.remove(table, id);
@@ -276,11 +291,36 @@ var DB = (function () {
 
     /** Elimina todos los registros de una tabla. */
     async clearTable(table) {
+      if (!_suppressDirty && SYNCED_TABLES.indexOf(table) >= 0) {
+        var ids = (await this.getAll(table)).map(function (r) { return r.id; });
+        await this.addTombstones(table, ids);
+      }
       if (isNative) {
         await Native.exec('DELETE FROM ' + table);
+        await markDirtyNative();
         return;
       }
       return LS.clearTable(table);
+    },
+
+    /* ── Registro de borrados (para que la sincronización no "resucite" lo eliminado) ── */
+    async getTombstones() {
+      var now = Date.now();
+      return ((await this.getCfg('tombstones')) || []).filter(function (t) {
+        return t && t.id && (now - new Date(t.at).getTime()) < TOMBSTONE_TTL_MS;
+      });
+    },
+
+    async setTombstones(list) {
+      await this.setCfg('tombstones', list);
+    },
+
+    async addTombstones(table, ids) {
+      if (_suppressDirty || SYNCED_TABLES.indexOf(table) < 0 || !ids.length) return;
+      var list = await this.getTombstones();
+      var at = new Date().toISOString();
+      ids.forEach(function (id) { list.push({ id: id, tabla: table, at: at }); });
+      await this.setTombstones(list);
     },
 
     /** Ejecuta una consulta SQL personalizada (solo para operaciones avanzadas). */
@@ -311,14 +351,12 @@ var DB = (function () {
 
     /** ¿Hay cambios locales que todavía no se han subido a Sheets? */
     async isDirty() {
-      if (isNative) return false;
-      return !!LS.getCfg('dirtySince');
+      return !!(await this.getCfg('dirtySince'));
     },
 
     /** Marca los datos locales como "ya sincronizados" (sin cambios pendientes) */
     async clearDirty() {
-      if (isNative) return;
-      LS.setCfg('dirtySince', null);
+      await this.setCfg('dirtySince', null);
     },
 
     /* ── Exportar todos los datos (para respaldo) ── */
@@ -332,22 +370,51 @@ var DB = (function () {
       return { grupos, clases, horario, estudiantes };
     },
 
-    /* ── Importar respaldo completo (solo toca las tablas presentes en el payload) ── */
-    async importAll(payload) {
-      var self  = this;
-      var tasks = [];
+    /* ── Importar respaldo completo (solo toca las tablas presentes en el payload) ──
+       Antes de reemplazar guarda una copia de lo actual (cfg 'preImportBackup') y,
+       si algo falla a la mitad, restaura esa copia.
+       opts.recordDeletions: lo que existía y ya no viene en el payload se registra
+       como borrado (para importaciones manuales de respaldo). */
+    async importAll(payload, opts) {
+      opts = opts || {};
+      var self     = this;
+      var tables   = SYNCED_TABLES.filter(function (t) { return payload.hasOwnProperty(t); });
+      var snapshot = await this.exportAll();
+
+      if (opts.recordDeletions) {
+        for (var t of tables) {
+          var keep = {};
+          (payload[t] || []).forEach(function (r) { keep[r.id] = true; });
+          await this.addTombstones(t, snapshot[t].filter(function (r) { return !keep[r.id]; }).map(function (r) { return r.id; }));
+        }
+      }
+
+      async function replace(data) {
+        for (var tb of tables) {
+          var rows = data[tb] || [];
+          if (isNative) {
+            await self.clearTable(tb);
+            for (var r of rows) await self.upsert(tb, r);
+          } else {
+            LS._write(tb, rows.slice()); // una sola escritura por tabla
+          }
+        }
+      }
+
+      var wasSuppressed = _suppressDirty;
       _suppressDirty = true;
       try {
-        ['grupos', 'clases', 'horario', 'estudiantes'].forEach(function (table) {
-          if (payload.hasOwnProperty(table)) {
-            tasks.push(self.clearTable(table).then(function () {
-              return Promise.all((payload[table] || []).map(function (r) { return self.upsert(table, r); }));
-            }));
-          }
-        });
-        await Promise.all(tasks);
+        try { await replace(payload); }
+        catch (e) {
+          try { await replace(snapshot); } catch (e2) { console.error('[DB] No se pudo restaurar tras fallo de importación:', e2); }
+          throw e;
+        }
       } finally {
-        _suppressDirty = false;
+        _suppressDirty = wasSuppressed;
+      }
+
+      if (SYNCED_TABLES.some(function (t) { return snapshot[t].length; })) {
+        await this.setCfg('preImportBackup', { at: new Date().toISOString(), data: snapshot });
       }
     }
   };

@@ -39,7 +39,8 @@ var GroupsService = (function () {
         grado:      (data.grado      || '').trim(),
         color:      data.color     || '#2D6A4F',
         icono:      data.icono     || '📘',
-        createdAt:  data.createdAt || new Date().toISOString()
+        createdAt:  data.createdAt || new Date().toISOString(),
+        updatedAt:  new Date().toISOString()
       };
       await DB.upsert('grupos', record);
       return { ok: true, record: record };
@@ -55,6 +56,9 @@ var GroupsService = (function () {
       // Eliminar bloques de horario del grupo
       var bloques = await DB.getWhere('horario', { groupId: id });
       for (var b of bloques) await DB.remove('horario', b.id);
+      // Eliminar estudiantes del grupo
+      var alumnos = await DB.getWhere('estudiantes', { groupId: id });
+      for (var s of alumnos) await DB.remove('estudiantes', s.id);
       // Eliminar el grupo
       await DB.remove('grupos', id);
       return true;

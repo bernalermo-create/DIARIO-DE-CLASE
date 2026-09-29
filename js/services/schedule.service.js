@@ -49,7 +49,8 @@ var ScheduleService = (function () {
         horaInicio: data.horaInicio || '',
         horaFin:    data.horaFin    || '',
         groupId:    data.groupId,
-        aula:       (data.aula || '').trim()
+        aula:       (data.aula || '').trim(),
+        updatedAt:  new Date().toISOString()
       };
       await DB.upsert('horario', record);
       return { ok: true, record: record };
